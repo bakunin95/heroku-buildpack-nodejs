@@ -1,43 +1,66 @@
 #!/usr/bin/env bash
-
-####### Configure environment
+# bin/compile <build-dir> <cache-dir>
 set -e
+
 mktmpdir() {
-dir=$(mktemp -t fakesu-$1-XXXX)
-rm -rf $dir
-mkdir -p $dir
-echo $dir
+  dir=$(mktemp -t fakesu-$1-XXXX)
+  rm -rf $dir
+  mkdir -p $dir
+  echo $dir
 }
+
 function indent() {
-c='s/^/ /'
-case $(uname) in
-Darwin) sed -l "$c";;
-*) sed -u "$c";;
-esac
+  c='s/^/       /'
+  case $(uname) in
+    Darwin) sed -l "$c";;
+    *)      sed -u "$c";;
+  esac
 }
+
+function escape_regex() {
+  sed s/\\//\\\\\\//g
+}
+
 BUILDPACK_DIR=`cd $(dirname $0); cd ..; pwd`
 BUILD_DIR=$1
 CACHE_DIR=$2
-GRAPHVIZ_BUILD="$(mktmpdir graphviz)"
-mkdir -p $CACHE_DIR/.tools/graphviz
-export PATH=/sbin:/usr/sbin:$PATH:
-echo "-----> Fetching graphviz"
-cd $WGET_BUILD
-curl -O http://www.graphviz.org/pub/graphviz/stable/SOURCES/graphviz-2.38.0.tar.gz >/dev/null 2>&1
-tar zxvf graphviz-2.38.0.tar.gz >/dev/null 2>&1
-cd graphviz-2.38.0
-echo "-----> Configuring graphviz"
-./configure --prefix=$CACHE_DIR/.tools/graphviz >/dev/null 2>&1
-echo "-----> Compiling graphviz"
-make -j5 >/dev/null 2>&1
-echo "-----> Installing graphviz"
-make install >/dev/null 2>&1
-echo "grapvhiz installed" | indent
+GRAPHVIZ_CACHE_DIR="$CACHE_DIR/heroku-graphviz/"
+GRAPHVIZ_DIR="$BUILD_DIR/vendor/builds/heroku-graphviz/"
 
-###
-mkdir -p .profile.d
-echo "PATH=\$HOME/$INSTALL_DIR/bin:\$PATH" > .profile.d/grapvhiz.sh
-###
+mkdir -p $GRAPHVIZ_DIR
+mkdir -p $GRAPHVIZ_CACHE_DIR
+
+cp "$BUILDPACK_DIR/version" $GRAPHVIZ_DIR
+
+if [ -f $GRAPHVIZ_CACHE_DIR/version ] && [ `cat $GRAPHVIZ_CACHE_DIR/version` = `cat $GRAPHVIZ_DIR/version` ]; then
+  echo "-----> Copying cached graphviz"
+  rm -rf $GRAPHVIZ_DIR
+  cp -R $GRAPHVIZ_CACHE_DIR $GRAPHVIZ_DIR
+else
+
+  mv $BUILDPACK_DIR/heroku-fontconfig $GRAPHVIZ_DIR
+  FONTCONFIG_DIR="$GRAPHVIZ_DIR/heroku-fontconfig"
+
+  sed -i'' -e"s/^prefix=.*/prefix=`echo $FONTCONFIG_DIR | escape_regex`/" "$FONTCONFIG_DIR/lib/pkgconfig/fontconfig.pc"
+
+  export PATH=/sbin:/usr/sbin:$PATH:
+  export PKG_CONFIG_PATH="$FONTCONFIG_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+  echo "-----> Fetching and installing graphviz"
+  cd $WGET_BUILD
+  curl -O http://www.graphviz.org/pub/graphviz/stable/SOURCES/graphviz-2.38.0.tar.gz
+  tar zxvf graphviz-2.38.0.tar.gz
+  cd graphviz-2.38.0
+  ./configure --prefix=$GRAPHVIZ_DIR --with-pangocairo
+  make
+  make install
+  rm -rf $GRAPHVIZ_CACHE_DIR
+  cp -R $GRAPHVIZ_DIR $GRAPHVIZ_CACHE_DIR
+
+fi
+echo "grapvhiz installed at $GRAPHVIZ_DIR" | indent
+
+########
 
 
 
