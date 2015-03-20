@@ -1,77 +1,52 @@
-#!/usr/bin/env bash
-# bin/compile <build-dir> <cache-dir>
+#!/bin/bash
+# ------------------------------------------------------------------------------
+# Called by the build process (slug compiler):
+# compile <BUILD_DIR> <CACHE_DIR> <ENV_DIR>
+# ------------------------------------------------------------------------------
+# This executes in a special build environment where:
+# /app is the slug compiler
+# /tmp/build_<hash> (BUILD_DIR) contains the source code of our application,
+# and is going to be the slug of our app
+# ------------------------------------------------------------------------------
+# Summary: Downloads the Debian package 'graphviz' and all its dependent
+# packages, and installs them manually in our application slug.
+# ------------------------------------------------------------------------------
+# Exit whole script if any command returns a non-zero status (i.e. error)
 set -e
+# Holds our application source cde
+BUILD_DIR=$1 # /tmp/build_<hash> (subject to change...)
+# Location, relative to app root, where we want to install Graphviz to
+INSTALL_DIR=vendor/graphviz
+mkdir -p $BUILD_DIR/$INSTALL_DIR
+# Creation of a custom apt environment. We have to do this, because we don't
+# have write permissions for the default apt environment. We intentionally do
+# it in an ephemeral location and not in the cache for keeping the cache small.
+APT=$HOME/apt # HOME=/app in the build environment
+mkdir -p $APT/cache/archives/partial
+mkdir -p $APT/state/lists/partial
+# apt-get options required by our custom apt environment
+OPTIONS="-o debug::nolocking=true -o dir::cache=$APT/cache -o dir::state=$APT/state"
+# The mandatory apt-get update
+echo "-----> Updating Debian package lists (apt-get update)"
+apt-get $OPTIONS update >/dev/null 2>&1
+# Download Graphviz package and its dependencies. The downloaded packages go to
+# $APT/cache/archives. The exact Graphviz version is determined by the version
+# in the 'graphviz' Debian package for the Linux version running on Heroku.
+echo "-----> Downloading Graphviz package and dependencies"
+apt-get $OPTIONS --download-only --assume-yes install graphviz >/dev/null 2>&1
+# Manual installation of the Graphviz package and its dependencies. This means
+# basically extracting all the packages to our installation directory.
+echo "-----> Installing Graphviz package and dependencies"
+cd $APT/cache/archives
+for PKG in $(ls *.deb); do
+dpkg -x $PKG $BUILD_DIR/$INSTALL_DIR
+done
+# Add Graphviz to the runtime environment's PATH. Scripts in .profile.d/ are
+# sourced when the dyno running our application starts up.
+cd $BUILD_DIR
+mkdir -p .profile.d
+echo "PATH=\$HOME/$INSTALL_DIR/usr/bin:\$PATH" >.profile.d/graphviz.sh
 
-mktmpdir() {
-  dir=$(mktemp -t fakesu-$1-XXXX)
-  rm -rf $dir
-  mkdir -p $dir
-  echo $dir
-}
-
-function indent() {
-  c='s/^/       /'
-  case $(uname) in
-    Darwin) sed -l "$c";;
-    *)      sed -u "$c";;
-  esac
-}
-
-function escape_regex() {
-  sed s/\\//\\\\\\//g
-}
-
-# Usage: $ set-env key value
-function set-env (){
-  echo "export $1=$2" >> $PROFILE_PATH
-}
-
-BUILDPACK_DIR=`cd $(dirname $0); cd ..; pwd`
-BUILD_DIR=$1
-CACHE_DIR=$2
-GRAPHVIZ_CACHE_DIR="$CACHE_DIR/heroku-graphviz/"
-GRAPHVIZ_DIR="$BUILD_DIR/vendor/builds/heroku-graphviz/"
-PROFILE_PATH="$BUILD_DIR/.profile.d/graphviz.sh"
-
-mkdir -p $GRAPHVIZ_DIR 
-mkdir -p $GRAPHVIZ_CACHE_DIR 
-mkdir -p $(dirname $PROFILE_PATH)
-
-cp "$BUILDPACK_DIR/version" $GRAPHVIZ_DIR
-
-if [ -f $GRAPHVIZ_CACHE_DIR/version ] && [ `cat $GRAPHVIZ_CACHE_DIR/version` = `cat $GRAPHVIZ_DIR/version` ]; then
-  echo "-----> Copying cached graphviz"
-  rm -rf $GRAPHVIZ_DIR
-  cp -R $GRAPHVIZ_CACHE_DIR $GRAPHVIZ_DIR
-else
-
-  mv $BUILDPACK_DIR/heroku-fontconfig $GRAPHVIZ_DIR
-  FONTCONFIG_DIR="$GRAPHVIZ_DIR/heroku-fontconfig"
-
-  sed -i'' -e"s/^prefix=.*/prefix=`echo $FONTCONFIG_DIR | escape_regex`/" "$FONTCONFIG_DIR/lib/pkgconfig/fontconfig.pc"
-
-  export PATH=/sbin:/usr/sbin:$PATH:
-  export PKG_CONFIG_PATH="$FONTCONFIG_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
-
-  echo "-----> Fetching and installing graphviz"
-  cd $WGET_BUILD
-  curl -O http://www.graphviz.org/pub/graphviz/stable/SOURCES/graphviz-2.34.0.tar.gz
-  tar zxvf graphviz-2.28.0.tar.gz
-  cd graphviz-2.28.0
-  ./configure --prefix=$GRAPHVIZ_DIR --with-pangocairo
-  make
-  make install
-  rm -rf $GRAPHVIZ_CACHE_DIR
-  cp -R $GRAPHVIZ_DIR $GRAPHVIZ_CACHE_DIR
-
-fi
-
-# Set context environment variables.
-set-env PATH '$PATH:$HOME/vendor/builds/heroku-graphviz/bin'
-set-env LD_LIBRARY_PATH '$HOME/vendor/builds/heroku-graphviz/lib/:$HOME/vendor/builds/heroku-graphviz/heroku-fontconfig/lib/'
-set-env FONTCONFIG_PATH '$HOME/vendor/builds/heroku-graphviz/heroku-fontconfig/etc/fonts'
-
-echo "grapvhiz installed at $GRAPHVIZ_DIR" | indent
 
 ########
 
