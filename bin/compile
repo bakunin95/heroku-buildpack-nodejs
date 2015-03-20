@@ -34,6 +34,11 @@ echo "-----> Installing graphviz"
 make install >/dev/null 2>&1
 echo "grapvhiz installed" | indent
 
+###
+mkdir -p .profile.d
+echo "PATH=\$HOME/$INSTALL_DIR/bin:\$PATH" > .profile.d/grapvhiz.sh
+###
+
 
 
 set -o errexit    # always exit on error
